@@ -94,7 +94,6 @@ float iou(float lbox[4], float rbox[4]) {
 
 void nms_and_adapt(std::vector<Detection>& det, std::vector<Detection>& res, float nms_thresh, int width, int height) {
     std::sort(det.begin(), det.end(), cmp);
-    //std::cout<<" Sort complete!"<<std::endl;
     for (unsigned int m = 0; m < det.size(); ++m) {
         auto& item = det[m];
         res.push_back(item);
@@ -131,43 +130,17 @@ static bool NvDsInferParseRetinaface(std::vector<NvDsInferLayerInfo> const &outp
                                     NvDsInferParseDetectionParams const &detectionParams,
                                     std::vector<NvDsInferObjectDetectionInfo> &objectList) {
     
-    //std::cout<<outputLayersInfo[0].layerName<<std::endl;
-    //std::cout<<(float*)(outputLayersInfo[0].buffer)<<std::endl;
-    /*float *output = (float*)(outputLayersInfo[0].buffer);
-    int count=0;
-    std::cout<<output[0]<<std::endl;
-    for(int i=1;i<output[0];){
-        if(output[i+4]<=0.5){
-            i=i+15;
-            continue;
-        }
-        std::cout<<"detection box"<<count<<std::endl;
-        std::cout<<"bbox_coord:";
-        for(int j=0;j<4;j++,i++){
-            std::cout<<" "<<output[i];
-        }
-        std::cout<<" confi:"<<output[i]<<" facial_land_mark:";
-        i++;
-        for(int j=0;j<10;j++,i++){
-            std::cout<<" "<<output[i];
-        }
-        std::cout<<std::endl;
-        count++;
-    }*/
+  
     float *output = (float*)(outputLayersInfo[0].buffer);
-    //std::cout<<"total data :"<<output[0]<<std::endl;
     std::vector<Detection> temp;
     std::vector<Detection> res;
-    //std::cout<<networkInfo.width<<"  "<<networkInfo.height<<std::endl;
     create_anchor_retinaface(temp, output, CONF_THRESH, networkInfo.width, networkInfo.height);
     nms_and_adapt(temp, res, NMS_THRESH, networkInfo.width, networkInfo.height);
-    //std::cout << "number of detections -> " << output[0] << std::endl;
-    //std::cout << "after nms -> " << res.size() << std::endl;
-    //std::cout<<"NMS COMPLETE!"<<std::endl;
+    std::cout << "number of detections -> " << output[0] << std::endl;
+    std::cout << "after nms -> " << res.size() << std::endl;
     for(auto& r : res) {
         if(r.score<=VIS_THRESH) continue;
 
-        //get_adapt_landmark(tmp, INPUT_W, INPUT_H, res[j].bbox, res[j].landmark)
 	    NvDsInferParseObjectInfo oinfo;  
 	    oinfo.classId = 0;
 	    oinfo.left    = static_cast<unsigned int>(r.bbox[0]);
@@ -176,11 +149,8 @@ static bool NvDsInferParseRetinaface(std::vector<NvDsInferLayerInfo> const &outp
 	    oinfo.height  = static_cast<unsigned int>(r.bbox[3]-r.bbox[1]);
 	    oinfo.detectionConfidence = r.score;
         objectList.push_back(oinfo);
-        std::cout<<"final:"<<oinfo.left<<","<<oinfo.top<<","<<oinfo.width<<","<<oinfo.height<<","<<oinfo.detectionConfidence<<std::endl;
-        //std::cout << static_cast<unsigned int>(r.bbox[0]) << "," << static_cast<unsigned int>(r.bbox[1]) << "," << static_cast<unsigned int>(r.bbox[2]) << "," 
-        //          << static_cast<unsigned int>(r.bbox[3]) << "," << "," << static_cast<unsigned int>(r.score) << std::endl;
-	    
-        //std::cout<<"add success!"<<std::endl;        
+        //std::cout<<"final:"<<oinfo.left<<","<<oinfo.top<<","<<oinfo.width<<","<<oinfo.height<<","<<oinfo.detectionConfidence<<std::endl;
+             
     }
     return true;
 }
@@ -195,5 +165,6 @@ extern "C" bool NvDsInferParseCustomRetinaface(
     return NvDsInferParseRetinaface(
         outputLayersInfo, networkInfo, detectionParams, objectList);
 }
+
 /* Check that the custom function has been defined correctly */
 CHECK_CUSTOM_PARSE_FUNC_PROTOTYPE(NvDsInferParseCustomRetinaface);

@@ -17,21 +17,87 @@
 # limitations under the License.
 ################################################################################
 
+import re
 import sys
-# import keyboard
+
+from torch import tensor
 sys.path.append('../')
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import GObject, Gst
 from common.is_aarch_64 import is_aarch64
 from common.bus_call import bus_call
-
+from rface_custom import parse_objects_from_tensor_meta
 import pyds
+import ctypes
+import numpy as np
+import torch
+from detection_info import *
+import scale_from_txt
 
 PGIE_CLASS_ID_VEHICLE = 0
 PGIE_CLASS_ID_BICYCLE = 1
 PGIE_CLASS_ID_PERSON = 2
 PGIE_CLASS_ID_ROADSIGN = 3
+
+
+
+    
+def pgie_src_pad_buffer_probe(pad,info, u_data):
+
+    gst_buffer = info.get_buffer()
+    if not gst_buffer:
+        print("Unable to get GstBuffer ")
+        return
+
+    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+
+    l_frame = batch_meta.frame_meta_list
+    while l_frame is not None:
+        try:
+            # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
+            # The casting is done by pyds.glist_get_nvds_frame_meta()
+            # The casting also keeps ownership of the underlying memory
+            # in the C code, so the Python garbage collector will leave
+            # it alone.
+            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
+        except StopIteration:
+            break
+    
+        l_user=frame_meta.frame_user_meta_list
+        while l_user is not None:
+            try:
+                # Note that l_user.data needs a cast to pyds.NvDsUserMeta
+                # The casting is done by pyds.NvDsUserMeta.cast()
+                # The casting also keeps ownership of the underlying memory
+                # in the C code, so the Python garbage collector will leave
+                # it alone
+                user_meta=pyds.NvDsUserMeta.cast(l_user.data) 
+            except StopIteration:
+                break
+            
+            # Check data type of user_meta 
+            if(user_meta and user_meta.base_meta.meta_type==pyds.NvDsMetaType.NVDSINFER_TENSOR_OUTPUT_META): 
+                try:
+                    tensor_meta = pyds.NvDsInferTensorMeta.cast(user_meta.user_meta_data)
+                except StopIteration:
+                    break
+                
+                layer = pyds.get_nvds_LayerInfo(tensor_meta, 0)
+                global result_landmark 
+                result_boxes, result_scores, result_landmark = parse_objects_from_tensor_meta(layer)
+                for i in range(len(result_boxes)):
+                    det = DetectionInfo()
+             
+            try:
+                l_user=l_user.next
+            except StopIteration:
+                break    
+        try:
+            l_frame=l_frame.next
+        except StopIteration:
+            break
+    return Gst.PadProbeReturn.OK
 
 
 def osd_sink_pad_buffer_probe(pad,info,u_data):
@@ -45,6 +111,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
     }
     num_rects=0
 
+
     gst_buffer = info.get_buffer()
     if not gst_buffer:
         print("Unable to get GstBuffer ")
@@ -54,6 +121,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
     # Note that pyds.gst_buffer_get_nvds_batch_meta() expects the
     # C address of gst_buffer as input, which is obtained with hash(gst_buffer)
     batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    
     
     l_frame = batch_meta.frame_meta_list
     while l_frame is not None:
@@ -68,46 +136,86 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         except StopIteration:
             break
         
-
+        result_landmark = []
+        l_user=frame_meta.frame_user_meta_list
+        if l_user is None:
+            print("no user data!!!!")
+        while l_user is not None:
+            try:
+                # Note that l_user.data needs a cast to pyds.NvDsUserMeta
+                # The casting is done by pyds.NvDsUserMeta.cast()
+                # The casting also keeps ownership of the underlying memory
+                # in the C code, so the Python garbage collector will leave
+                # it alone
+                user_meta=pyds.NvDsUserMeta.cast(l_user.data) 
+            except StopIteration:
+                break
+            
+            # Check data type of user_meta 
+            if(user_meta and user_meta.base_meta.meta_type==pyds.NvDsMetaType.NVDSINFER_TENSOR_OUTPUT_META): 
+                try:
+                    tensor_meta = pyds.NvDsInferTensorMeta.cast(user_meta.user_meta_data)
+                except StopIteration:
+                    break
+                
+                layer = pyds.get_nvds_LayerInfo(tensor_meta, 0)
+                result_landmark = parse_objects_from_tensor_meta(layer)
+                      
+            try:
+                l_user=l_user.next
+            except StopIteration:
+                break    
         display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+        #user_meta = pyds.nvds_acquire_user_meta_from_pool(batch_meta)
 
         frame_number=frame_meta.frame_num
         num_rects = frame_meta.num_obj_meta
-        display_meta.num_circles = num_rects
-        print("frame:", frame_number)
         l_obj=frame_meta.obj_meta_list
-        i=0
-        if l_obj is not None:
-            print("objlist is not empty.")
         while l_obj is not None:
             try:
                 # Casting l_obj.data to pyds.NvDsObjectMeta
                 #obj_meta=pyds.glist_get_nvds_object_meta(l_obj.data)
                 obj_meta=pyds.NvDsObjectMeta.cast(l_obj.data)
+                
             except StopIteration:
                 break
+            
             # obj_counter[obj_meta.class_id] += 1
             # set bbox color in rgba
-            print(obj_meta.class_id, obj_meta.confidence, obj_meta.detector_bbox_info.org_bbox_coords.left,obj_meta.detector_bbox_info.org_bbox_coords.top)
+            # print(obj_meta.landmarks[0])
             obj_meta.rect_params.border_color.set(1.0, 1.0, 1.0, 0.0)
             # set the border width in pixel
             obj_meta.rect_params.border_width=5
-            obj_meta.rect_params.has_bg_color=1
+            obj_meta.rect_params.has_bg_color=0
             obj_meta.rect_params.bg_color.set(0.0, 0.5, 0.3, 0.4)
-            #display_meta.circle_params[i].xc=int(obj_meta.detector_bbox_info.org_bbox_coords.left)
-            #display_meta.circle_params[i].yc=int(obj_meta.detector_bbox_info.org_bbox_coords.top)
-            #display_meta.circle_params[i].radius=20
-            #display_meta.circle_params[i].circle_color.set(0.0, 0.0, 0.0, 1.0)
-            i = i+1
+
+            
+            # print("ds landmarks:",int(landmarks[0]), int(landmarks[1]), int(landmarks[2]), int(landmarks[3]), int(landmarks[4]), int(landmarks[5]), int(landmarks[6]))
+            # print("ds bbox:",obj_meta.detector_bbox_info.org_bbox_coords.left,obj_meta.detector_bbox_info.org_bbox_coords.top,obj_meta.detector_bbox_info.org_bbox_coords.width, obj_meta.detector_bbox_info.org_bbox_coords.height)
             try: 
                 l_obj=l_obj.next
+
             except StopIteration:
                 break
 
         # Acquiring a display meta object. The memory ownership remains in
         # the C code so downstream plugins can still access it. Otherwise
         # the garbage collector will claim it when this probe function exits.
-        
+
+        num = len(result_landmark)
+        display_meta.num_circles = num * 5
+        print(frame_number," has ",num," landmark coordinates")
+        for i in range(len(result_landmark)):
+            landmarks = result_landmark[i]*3
+            for j in range(5):
+                #display_meta.circle_params[i*5+j].has_bg_color = 1
+                #display_meta.circle_params[i*5+j].bg_color.set(0.0, 0.0, 0.0, 1.0)
+                display_meta.circle_params[i*5+j].xc = int(landmarks[j*2])
+                display_meta.circle_params[i*5+j].yc = int(landmarks[j*2+1])
+                print(i*5+j,":",int(landmarks[j*2]),",",int(landmarks[j*2+1]))
+                display_meta.circle_params[i*5+j].radius=5
+                display_meta.circle_params[i*5+j].circle_color.set(0.0, 0.0, 0.0, 1.0)
+                
         display_meta.num_labels = 1
         py_nvosd_text_params = display_meta.text_params[0]
         # Setting display text to be shown on screen
@@ -271,9 +379,18 @@ def main(args):
     bus.add_signal_watch()
     bus.connect ("message", bus_call, loop)
 
+    result = Global_result()
+
     # Lets add probe to get informed of the meta data generated, we add probe to
     # the sink pad of the osd element, since by that time, the buffer would have
     # had got all the metadata.
+
+
+    '''pgie_src_pad = pgie.get_static_pad("src")
+    if not pgie_src_pad:
+        sys.stderr.write(" Unable to get src pad of pgie \n")  
+    pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, pgie_src_pad_buffer_probe, 0)'''
+
     osdsinkpad = nvosd.get_static_pad("sink")
     if not osdsinkpad:
         sys.stderr.write(" Unable to get sink pad of nvosd \n")

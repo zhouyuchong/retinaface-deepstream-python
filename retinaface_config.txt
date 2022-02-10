@@ -17,6 +17,7 @@ maintain-aspect-ratio=1
 # batch-size=1
 # workaround for getting topk detection
 num-detected-classes=1
+output-tensor-meta=1
 
 # custom detection parser
 parse-bbox-func-name=NvDsInferParseCustomRetinaface

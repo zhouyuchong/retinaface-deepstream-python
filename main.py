@@ -35,14 +35,22 @@ import torch
 from detection_info import *
 import scale_from_txt
 
+
+STREAM_MUX_WIDTH = 1920
+STREAM_MUX_HEIGHT = 1080
+COORDINATES_SCALE_PARAM = 1
+
+
 PGIE_CLASS_ID_VEHICLE = 0
 PGIE_CLASS_ID_BICYCLE = 1
 PGIE_CLASS_ID_PERSON = 2
 PGIE_CLASS_ID_ROADSIGN = 3
 
 
+def coor_scale(input_height, input_width, output_height, output_width):
+    return max(output_height/input_height, output_width/input_width)
 
-    
+        
 def pgie_src_pad_buffer_probe(pad,info, u_data):
 
     gst_buffer = info.get_buffer()
@@ -102,15 +110,10 @@ def pgie_src_pad_buffer_probe(pad,info, u_data):
 
 def osd_sink_pad_buffer_probe(pad,info,u_data):
     frame_number=0
-    #Intiallizing object counter with 0.
-    obj_counter = {
-        PGIE_CLASS_ID_VEHICLE:0,
-        PGIE_CLASS_ID_PERSON:0,
-        PGIE_CLASS_ID_BICYCLE:0,
-        PGIE_CLASS_ID_ROADSIGN:0
-    }
-    num_rects=0
-
+    # get engine network output height & width
+    e_height, e_width = scale_from_txt.get_network_scale("retina_network_config.txt")
+    # set the scale param for later display
+    scale = coor_scale(e_height, e_width, STREAM_MUX_HEIGHT, STREAM_MUX_WIDTH)
 
     gst_buffer = info.get_buffer()
     if not gst_buffer:
@@ -121,7 +124,6 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
     # Note that pyds.gst_buffer_get_nvds_batch_meta() expects the
     # C address of gst_buffer as input, which is obtained with hash(gst_buffer)
     batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    
     
     l_frame = batch_meta.frame_meta_list
     while l_frame is not None:
@@ -136,10 +138,10 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         except StopIteration:
             break
         
+        frame_number=frame_meta.frame_num
         result_landmark = []
+
         l_user=frame_meta.frame_user_meta_list
-        if l_user is None:
-            print("no user data!!!!")
         while l_user is not None:
             try:
                 # Note that l_user.data needs a cast to pyds.NvDsUserMeta
@@ -166,32 +168,24 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
             except StopIteration:
                 break    
         display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-        #user_meta = pyds.nvds_acquire_user_meta_from_pool(batch_meta)
 
-        frame_number=frame_meta.frame_num
+        
         num_rects = frame_meta.num_obj_meta
         l_obj=frame_meta.obj_meta_list
         while l_obj is not None:
             try:
                 # Casting l_obj.data to pyds.NvDsObjectMeta
-                #obj_meta=pyds.glist_get_nvds_object_meta(l_obj.data)
                 obj_meta=pyds.NvDsObjectMeta.cast(l_obj.data)
                 
             except StopIteration:
                 break
             
-            # obj_counter[obj_meta.class_id] += 1
             # set bbox color in rgba
-            # print(obj_meta.landmarks[0])
             obj_meta.rect_params.border_color.set(1.0, 1.0, 1.0, 0.0)
             # set the border width in pixel
             obj_meta.rect_params.border_width=5
-            obj_meta.rect_params.has_bg_color=0
+            obj_meta.rect_params.has_bg_color=1
             obj_meta.rect_params.bg_color.set(0.0, 0.5, 0.3, 0.4)
-
-            
-            # print("ds landmarks:",int(landmarks[0]), int(landmarks[1]), int(landmarks[2]), int(landmarks[3]), int(landmarks[4]), int(landmarks[5]), int(landmarks[6]))
-            # print("ds bbox:",obj_meta.detector_bbox_info.org_bbox_coords.left,obj_meta.detector_bbox_info.org_bbox_coords.top,obj_meta.detector_bbox_info.org_bbox_coords.width, obj_meta.detector_bbox_info.org_bbox_coords.height)
             try: 
                 l_obj=l_obj.next
 
@@ -202,19 +196,20 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         # the C code so downstream plugins can still access it. Otherwise
         # the garbage collector will claim it when this probe function exits.
 
-        num = len(result_landmark)
-        display_meta.num_circles = num * 5
-        print(frame_number," has ",num," landmark coordinates")
+        # draw 5 landmarks for each rect
+        display_meta.num_circles = len(result_landmark) * 5
         for i in range(len(result_landmark)):
-            landmarks = result_landmark[i]*3
+            # scale coordinates
+            landmarks = result_landmark[i] * scale
             for j in range(5):
-                #display_meta.circle_params[i*5+j].has_bg_color = 1
-                #display_meta.circle_params[i*5+j].bg_color.set(0.0, 0.0, 0.0, 1.0)
-                display_meta.circle_params[i*5+j].xc = int(landmarks[j*2])
-                display_meta.circle_params[i*5+j].yc = int(landmarks[j*2+1])
-                print(i*5+j,":",int(landmarks[j*2]),",",int(landmarks[j*2+1]))
-                display_meta.circle_params[i*5+j].radius=5
-                display_meta.circle_params[i*5+j].circle_color.set(0.0, 0.0, 0.0, 1.0)
+                py_nvosd_circle_params = display_meta.circle_params[i * 5 + j]
+                py_nvosd_circle_params.circle_color.set(0.0, 0.0, 0.0, 1.0)
+                # py_nvosd_circle_params.has_bg_color = 1
+                # py_nvosd_circle_params.bg_color.set(0.0, 0.0, 0.0, 1.0)
+                py_nvosd_circle_params.xc = int(landmarks[j * 2])
+                py_nvosd_circle_params.yc = int(landmarks[j * 2 + 1])
+                # print(i*5+j,":",int(landmarks[j*2]),",",int(landmarks[j*2+1]))
+                py_nvosd_circle_params.radius=5
                 
         display_meta.num_labels = 1
         py_nvosd_text_params = display_meta.text_params[0]
@@ -223,7 +218,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         # memory will not be claimed by the garbage collector.
         # Reading the display_text field here will return the C address of the
         # allocated string. Use pyds.get_string() to get the string content.
-        py_nvosd_text_params.display_text = "Frame Number={} Number of Objects={} Vehicle_count={} Person_count={}".format(frame_number, num_rects, obj_counter[PGIE_CLASS_ID_VEHICLE], obj_counter[PGIE_CLASS_ID_PERSON])
+        py_nvosd_text_params.display_text = "Frame Number={} Number of Objects={}".format(frame_number, num_rects)
 
         # Now set the offsets where the string should appear
         py_nvosd_text_params.x_offset = 10
@@ -331,8 +326,8 @@ def main(args):
 
     print("Playing file %s " %args[1])
     source.set_property('location', args[1])
-    streammux.set_property('width', 1920)
-    streammux.set_property('height', 1080)
+    streammux.set_property('width', STREAM_MUX_WIDTH)
+    streammux.set_property('height', STREAM_MUX_HEIGHT)
     streammux.set_property('batch-size', 1)
     streammux.set_property('batched-push-timeout', 4000000)
     pgie.set_property('config-file-path', "retinaface_config.txt")

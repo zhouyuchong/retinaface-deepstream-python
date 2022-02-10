@@ -17,6 +17,7 @@
 # limitations under the License.
 ################################################################################
 
+from itertools import count
 import re
 import sys
 
@@ -29,15 +30,16 @@ from common.is_aarch_64 import is_aarch64
 from common.bus_call import bus_call
 from rface_custom import parse_objects_from_tensor_meta
 import pyds
-import ctypes
 import numpy as np
 import torch
 from detection_info import *
 import scale_from_txt
 
 
-STREAM_MUX_WIDTH = 1920
-STREAM_MUX_HEIGHT = 1080
+STREAMMUX_MAX_WIDTH = 1920
+STREAMMUX_MAX_HEIGHT = 1080
+MUXER_BATCH_TIMEOUT_USEC = 4000000
+MAX_ELEMENTS_IN_DISPLAY_META = 16
 COORDINATES_SCALE_PARAM = 1
 
 
@@ -113,7 +115,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
     # get engine network output height & width
     e_height, e_width = scale_from_txt.get_network_scale("retina_network_config.txt")
     # set the scale param for later display
-    scale = coor_scale(e_height, e_width, STREAM_MUX_HEIGHT, STREAM_MUX_WIDTH)
+    scale = coor_scale(e_height, e_width, STREAMMUX_MAX_HEIGHT, STREAMMUX_MAX_WIDTH)
 
     gst_buffer = info.get_buffer()
     if not gst_buffer:
@@ -197,20 +199,29 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         # the garbage collector will claim it when this probe function exits.
 
         # draw 5 landmarks for each rect
-        display_meta.num_circles = len(result_landmark) * 5
+        # display_meta.num_circles = len(result_landmark) * 5
+        ccount = 0
         for i in range(len(result_landmark)):
             # scale coordinates
             landmarks = result_landmark[i] * scale
+
+            # nvosd struct can only draw MAX 16 elements once 
+            # so acquire a new display meta for every face detected
+            display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)   
+            display_meta.num_circles = 5
+            ccount = 0
             for j in range(5):
-                py_nvosd_circle_params = display_meta.circle_params[i * 5 + j]
+                py_nvosd_circle_params = display_meta.circle_params[ccount]
                 py_nvosd_circle_params.circle_color.set(0.0, 0.0, 0.0, 1.0)
                 # py_nvosd_circle_params.has_bg_color = 1
                 # py_nvosd_circle_params.bg_color.set(0.0, 0.0, 0.0, 1.0)
                 py_nvosd_circle_params.xc = int(landmarks[j * 2])
                 py_nvosd_circle_params.yc = int(landmarks[j * 2 + 1])
-                # print(i*5+j,":",int(landmarks[j*2]),",",int(landmarks[j*2+1]))
-                py_nvosd_circle_params.radius=5
-                
+                py_nvosd_circle_params.radius=2
+                ccount = ccount + 1
+            pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
+
+        display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)       
         display_meta.num_labels = 1
         py_nvosd_text_params = display_meta.text_params[0]
         # Setting display text to be shown on screen
@@ -244,17 +255,6 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
 			
     return Gst.PadProbeReturn.OK	
 
-def pipeline_pause(pipeline):
-    print('Pause')
-    pipeline.set_state(Gst.State.PAUSED)
-    
-def pipeline_play(pipeline):
-    print('Pause')
-    pipeline.set_state(Gst.State.PLAYING)
-
-def onKeyboardEvent(event):
-    print(event.Key)  # 返回按下的键
-    return True
 
 def main(args):
     # Check input arguments
@@ -326,10 +326,10 @@ def main(args):
 
     print("Playing file %s " %args[1])
     source.set_property('location', args[1])
-    streammux.set_property('width', STREAM_MUX_WIDTH)
-    streammux.set_property('height', STREAM_MUX_HEIGHT)
+    streammux.set_property('width', STREAMMUX_MAX_WIDTH)
+    streammux.set_property('height', STREAMMUX_MAX_HEIGHT)
     streammux.set_property('batch-size', 1)
-    streammux.set_property('batched-push-timeout', 4000000)
+    streammux.set_property('batched-push-timeout', MUXER_BATCH_TIMEOUT_USEC)
     pgie.set_property('config-file-path', "retinaface_config.txt")
 
     print("Adding elements to Pipeline \n")
@@ -380,12 +380,6 @@ def main(args):
     # the sink pad of the osd element, since by that time, the buffer would have
     # had got all the metadata.
 
-
-    '''pgie_src_pad = pgie.get_static_pad("src")
-    if not pgie_src_pad:
-        sys.stderr.write(" Unable to get src pad of pgie \n")  
-    pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, pgie_src_pad_buffer_probe, 0)'''
-
     osdsinkpad = nvosd.get_static_pad("sink")
     if not osdsinkpad:
         sys.stderr.write(" Unable to get sink pad of nvosd \n")
@@ -396,10 +390,7 @@ def main(args):
     print("Starting pipeline \n")
     pipeline.set_state(Gst.State.PLAYING)
     try:
-        # keyboard.add_hotkey('q', pipeline_play(pipeline))
         loop.run()
-        #keyboard.add_hotkey('p', pipeline_pause(pipeline))
-
     except:
         pass
     # cleanup

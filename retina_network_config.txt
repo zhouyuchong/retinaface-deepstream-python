@@ -1,0 +1,2 @@
+input-height:480
+input-width:640

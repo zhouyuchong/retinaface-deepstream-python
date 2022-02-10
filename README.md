@@ -23,6 +23,7 @@ make nvdsinfer_customparser
 ```
 
 ## Usage
+modify tensorRT engine network size in [retina-engine-config](https://github.com/mrscarletzhou/retinaface-deepstream-python/blob/main/retina_network_config.txt) file
 ```
 LD_PRELOAD=./libnvdsinfer_custom_impl_Retinaface.so python3 main.py {VideoPath}
 ```
@@ -38,4 +39,4 @@ That's because of the [sychronazation bug](https://github.com/wang-xinyu/tensorr
 
 ## Undone
 + ~~to pass the landmarks to probe and display them. (tring to use NvDsUserMeta)~~
-+ adapt scale of input-network and output
++ ~~adapt scale of input-network and output~~

@@ -38,7 +38,7 @@ LD_PRELOAD=./libnvdsinfer_custom_impl_Retinaface.so python3 main.py {VideoPath}
 That's because of the [sychronazation bug](https://github.com/wang-xinyu/tensorrtx/commit/e72d9db48ba8453fd4465048a0175621f1b1c501#diff-e4f7cf998c56a033573edc39c7736317f73a28402d835ee44001bac64f386dfb) of tensorrtx codes. To solve it you should modify the [decode.cu](https://github.com/wang-xinyu/tensorrtx/blob/master/retinaface/decode.cu) file in tensorrtx repo and regenerate the engine.
 
 ## Undone
-+ ~~to pass the landmarks to probe and display them. (tring to use NvDsUserMeta)~~
++ ~~to pass the landmarks to probe and display them. (trying to use NvDsUserMeta)~~
 + ~~adapt scale of input-network and output~~
 + Modularity
 + multiple src input

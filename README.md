@@ -40,3 +40,7 @@ That's because of the [sychronazation bug](https://github.com/wang-xinyu/tensorr
 ## Undone
 + ~~to pass the landmarks to probe and display them. (tring to use NvDsUserMeta)~~
 + ~~adapt scale of input-network and output~~
++ Modularity
++ multiple src input
++ dynamic add and delete
++ pause and continue function

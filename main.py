@@ -32,7 +32,6 @@ from rface_custom import parse_objects_from_tensor_meta
 import pyds
 import numpy as np
 import torch
-from detection_info import *
 import scale_from_txt
 
 

@@ -136,8 +136,8 @@ static bool NvDsInferParseRetinaface(std::vector<NvDsInferLayerInfo> const &outp
     std::vector<Detection> res;
     create_anchor_retinaface(temp, output, CONF_THRESH, networkInfo.width, networkInfo.height);
     nms_and_adapt(temp, res, NMS_THRESH, networkInfo.width, networkInfo.height);
-    std::cout << "number of detections -> " << output[0] << std::endl;
-    std::cout << "after nms -> " << res.size() << std::endl;
+    //std::cout << "number of detections -> " << output[0] << std::endl;
+    //std::cout << "after nms -> " << res.size() << std::endl;
     for(auto& r : res) {
         if(r.score<=VIS_THRESH) continue;
 

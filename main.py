@@ -168,10 +168,12 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
                 l_user=l_user.next
             except StopIteration:
                 break    
-        display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)
+        
+        
 
         
         num_rects = frame_meta.num_obj_meta
+        face_count = 0
         l_obj=frame_meta.obj_meta_list
         while l_obj is not None:
             try:
@@ -180,6 +182,8 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
                 
             except StopIteration:
                 break
+            # if face_count == 14:
+
             
             # set bbox color in rgba
             obj_meta.rect_params.border_color.set(1.0, 1.0, 1.0, 0.0)
@@ -187,6 +191,8 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
             obj_meta.rect_params.border_width=5
             obj_meta.rect_params.has_bg_color=1
             obj_meta.rect_params.bg_color.set(0.0, 0.5, 0.3, 0.4)
+            face_count +=1
+            print(face_count)
             try: 
                 l_obj=l_obj.next
 
@@ -199,6 +205,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
 
         # draw 5 landmarks for each rect
         # display_meta.num_circles = len(result_landmark) * 5
+        display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)
         ccount = 0
         for i in range(len(result_landmark)):
             # scale coordinates
@@ -373,7 +380,6 @@ def main(args):
     bus.add_signal_watch()
     bus.connect ("message", bus_call, loop)
 
-    result = Global_result()
 
     # Lets add probe to get informed of the meta data generated, we add probe to
     # the sink pad of the osd element, since by that time, the buffer would have

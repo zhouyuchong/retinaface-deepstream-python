@@ -135,10 +135,11 @@ static bool NvDsInferParseRetinaface(std::vector<NvDsInferLayerInfo> const &outp
     std::vector<Detection> temp;
     std::vector<Detection> res;
     create_anchor_retinaface(temp, output, CONF_THRESH, networkInfo.width, networkInfo.height);
-    nms_and_adapt(temp, res, NMS_THRESH, networkInfo.width, networkInfo.height);
+    // there is no need to do another NMS since already done in tensorrtx
+    //nms_and_adapt(temp, res, NMS_THRESH, networkInfo.width, networkInfo.height);
     //std::cout << "number of detections -> " << output[0] << std::endl;
     //std::cout << "after nms -> " << res.size() << std::endl;
-    for(auto& r : res) {
+    for(auto& r : temp) {
         if(r.score<=VIS_THRESH) continue;
 
 	    NvDsInferParseObjectInfo oinfo;  

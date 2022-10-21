@@ -27,15 +27,15 @@ from common.bus_call import bus_call
 from common.FPS import GETFPS
 import configparser
 
-from rface_custom import parse_objects_from_tensor_meta
 import pyds
 import numpy as np
 import math
 import time
 import ctypes
-ctypes.cdll.LoadLibrary('/opt/nvidia/deepstream/deepstream/sources/pythonapps/models/retinaface/libRetinafaceDecoder.so')
+ctypes.cdll.LoadLibrary('/opt/models/retinaface/libplugin_rface.so')
 
 import scale_from_txt
+from rface_custom import *
 
 MAX_DISPLAY_LEN=64
 PGIE_CLASS_ID_VEHICLE = 0
@@ -45,8 +45,8 @@ PGIE_CLASS_ID_ROADSIGN = 3
 MUXER_OUTPUT_WIDTH=1920
 MUXER_OUTPUT_HEIGHT=1080
 MUXER_BATCH_TIMEOUT_USEC=4000000
-TILED_OUTPUT_WIDTH=1080
-TILED_OUTPUT_HEIGHT=720
+TILED_OUTPUT_WIDTH=1920
+TILED_OUTPUT_HEIGHT=1080
 GST_CAPS_FEATURES_NVMM="memory:NVMM"
 OSD_PROCESS_MODE= 0
 OSD_DISPLAY_TEXT= 1
@@ -65,15 +65,17 @@ PGIE_CLASS_ID_ROADSIGN = 3
 
 fps_streams={}
 is_first = True
-s_time = 0
-e_time = 0
+n_height = 0
+n_width = 0
 face_count = 0
+scale = 0
 
 def coor_scale(input_height, input_width, output_height, output_width):
     return max(output_height/input_height, output_width/input_width)
 
         
 def osd_sink_pad_buffer_probe(pad,info,u_data):
+    global scale
     frame_number=0
     gst_buffer = info.get_buffer()
     if not gst_buffer:
@@ -118,7 +120,9 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
                     break
                 
                 layer = pyds.get_nvds_LayerInfo(tensor_meta, 0)
-                result_landmark = parse_objects_from_tensor_meta(layer)                      
+                result_landmark = parse_objects_from_tensor_meta(layer)
+                # print(result_landmark)
+                   
             try:
                 l_user=l_user.next
             except StopIteration:
@@ -134,9 +138,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
                 
             except StopIteration:
                 break
-            # if face_count == 14:
 
-            
             # set bbox color in rgba
             obj_meta.rect_params.border_color.set(1.0, 1.0, 1.0, 0.0)
             # set the border width in pixel
@@ -161,10 +163,7 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
         ccount = 0
         for i in range(len(result_landmark)):
             # scale coordinates
-            landmarks = result_landmark[i]
-            #landmarks = result_landmark[i]
-            #print(landmarks)
-
+            landmarks = result_landmark[i] * scale
             # nvosd struct can only draw MAX 16 elements once 
             # so acquire a new display meta for every face detected
             display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)   
@@ -175,8 +174,8 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
                 py_nvosd_circle_params.circle_color.set(0.0, 0.0, 1.0, 1.0)
                 py_nvosd_circle_params.has_bg_color = 1
                 py_nvosd_circle_params.bg_color.set(0.0, 0.0, 0.0, 1.0)
-                py_nvosd_circle_params.xc = int(landmarks[j * 2])
-                py_nvosd_circle_params.yc = int(landmarks[j * 2 + 1])
+                py_nvosd_circle_params.xc = int(landmarks[j * 2]) if int(landmarks[j * 2]) > 0 else 0
+                py_nvosd_circle_params.yc = int(landmarks[j * 2 + 1]) if int(landmarks[j * 2 + 1]) > 0 else 0
                 py_nvosd_circle_params.radius=2
                 ccount = ccount + 1
             pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
@@ -215,70 +214,6 @@ def osd_sink_pad_buffer_probe(pad,info,u_data):
 			
     return Gst.PadProbeReturn.OK	
 
-def pgie_sink_pad_buffer_probe(pad,info,u_data):
-    global is_first, s_time, e_time, face_count
-    frame_number=0
-    num_rects=0
-    gst_buffer = info.get_buffer()
-    if not gst_buffer:
-        print("Unable to get GstBuffer ")
-        return
-
-    # Retrieve batch metadata from the gst_buffer
-    # Note that pyds.gst_buffer_get_nvds_batch_meta() expects the
-    # C address of gst_buffer as input, which is obtained with hash(gst_buffer)
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    l_frame = batch_meta.frame_meta_list
-    if is_first is True:
-        is_first = False
-        s_time = time.time()
-    while l_frame is not None:
-        try:
-            # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
-            # The casting is done by pyds.NvDsFrameMeta.cast()
-            # The casting also keeps ownership of the underlying memory
-            # in the C code, so the Python garbage collector will leave
-            # it alone.
-            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-        except StopIteration:
-            break
-            
-        if (e_time - s_time)>=1:
-            s_time =  e_time
-            face_count = 0
-        l_obj=frame_meta.obj_meta_list
-        while l_obj is not None:
-            try:
-                # Casting l_obj.data to pyds.NvDsObjectMeta
-                #obj_meta=pyds.glist_get_nvds_object_meta(l_obj.data)
-                obj_meta=pyds.NvDsObjectMeta.cast(l_obj.data)
-            except StopIteration:
-                break
-            drop_signal = False
-            # obj_meta.rect_params.border_color.set(0.0, 0.0, 1.0, 0.0)
-            # print(obj_meta.class_id," ", obj_meta.confidence)
-            if obj_meta.unique_component_id==1 and obj_meta.class_id==0:
-                face_count = face_count + 1
-            if face_count > 65:
-                print("reach max", frame_meta.frame_num,"  ", face_count)
-                drop_signal = True
-            try: 
-                l_obj=l_obj.next
-                if drop_signal is True:
-                    pyds.nvds_remove_obj_meta_from_frame(frame_meta, obj_meta)
-            except StopIteration:
-                break
-
-        # Get frame rate through this probe
-        fps_streams["stream{0}".format(frame_meta.pad_index)].get_fps()
-        try:
-            e_time = time.time()
-            l_frame=l_frame.next
-        except StopIteration:
-            break
-
-    return Gst.PadProbeReturn.OK
-
 def main(args):
      # Check input arguments
     if len(args) < 2:
@@ -288,6 +223,10 @@ def main(args):
     for i in range(0,len(args)-1):
         fps_streams["stream{0}".format(i)]=GETFPS(i)
     number_sources=len(args)-1
+
+    global n_height, n_width, scale
+    n_height, n_width = scale_from_txt.get_network_scale("retina_network_config.txt")
+    scale = coor_scale(n_height, n_width, TILED_OUTPUT_HEIGHT, TILED_OUTPUT_WIDTH)
 
     # Standard GStreamer initialization
     GObject.threads_init()
@@ -401,7 +340,7 @@ def main(args):
     tiler.set_property("width", TILED_OUTPUT_WIDTH)
     tiler.set_property("height", TILED_OUTPUT_HEIGHT)
     sink.set_property("qos",0)
-    sink.set_property("sync",0)
+    sink.set_property("sync",1)
 
     #Set properties of tracker
     config = configparser.ConfigParser()
@@ -443,9 +382,9 @@ def main(args):
     streammux.link(queue1)
     queue1.link(pgie)
     pgie.link(queue2)
-    queue2.link(tracker)
-    tracker.link(queue3)
-    queue3.link(sgie)
+    # queue2.link(tracker)
+    # tracker.link(queue3)
+    queue2.link(sgie)
     sgie.link(queue4)
     queue4.link(tiler)
     tiler.link(queue5)
@@ -471,12 +410,6 @@ def main(args):
         sys.stderr.write(" Unable to get src pad \n")
     else:
         tiler_src_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, 0)
-
-    pgie_src_pad=queue2.get_static_pad("sink")
-    if not pgie_src_pad:
-        sys.stderr.write(" Unable to get src pad \n")
-    else:
-        pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, pgie_sink_pad_buffer_probe, 0)
 
     # List the sources
     print("Now playing...")

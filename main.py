@@ -284,15 +284,6 @@ def main(args):
     if not pgie:
         sys.stderr.write(" Unable to create pgie \n")
     
-    print("Creating sgie \n ")
-    sgie = Gst.ElementFactory.make("nvinfer", "secondary-inference")
-    if not sgie:
-        sys.stderr.write(" Unable to create sgie \n")
-
-    print("Creating tracker \n ")
-    tracker = Gst.ElementFactory.make("nvtracker", "tracker")
-    if not tracker:
-        sys.stderr.write(" Unable to create tracker \n")
     print("Creating tiler \n ")
     tiler=Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
     if not tiler:
@@ -332,7 +323,6 @@ def main(args):
     if(pgie_batch_size != number_sources):
         print("WARNING: Overriding infer-config batch-size",pgie_batch_size," with number of sources ", number_sources," \n")
         pgie.set_property("batch-size",number_sources)
-    sgie.set_property('config-file-path', "config_arcface.txt")
     tiler_rows=int(math.sqrt(number_sources))
     tiler_columns=int(math.ceil((1.0*number_sources)/tiler_rows))
     tiler.set_property("rows",tiler_rows)
@@ -342,35 +332,8 @@ def main(args):
     sink.set_property("qos",0)
     sink.set_property("sync",1)
 
-    #Set properties of tracker
-    config = configparser.ConfigParser()
-    config.read('config_tracker.txt')
-    config.sections()
-
-    for key in config['tracker']:
-        if key == 'tracker-width' :
-            tracker_width = config.getint('tracker', key)
-            tracker.set_property('tracker-width', tracker_width)
-        if key == 'tracker-height' :
-            tracker_height = config.getint('tracker', key)
-            tracker.set_property('tracker-height', tracker_height)
-        if key == 'gpu-id' :
-            tracker_gpu_id = config.getint('tracker', key)
-            tracker.set_property('gpu_id', tracker_gpu_id)
-        if key == 'll-lib-file' :
-            tracker_ll_lib_file = config.get('tracker', key)
-            tracker.set_property('ll-lib-file', tracker_ll_lib_file)
-        if key == 'll-config-file' :
-            tracker_ll_config_file = config.get('tracker', key)
-            tracker.set_property('ll-config-file', tracker_ll_config_file)
-        if key == 'enable-past-frame' :
-            tracker_enable_past_frame = config.getint('tracker', key)
-            tracker.set_property('enable_past_frame', tracker_enable_past_frame)
-
     print("Adding elements to Pipeline \n")
     pipeline.add(pgie)
-    pipeline.add(tracker)
-    pipeline.add(sgie)
     pipeline.add(tiler)
     pipeline.add(nvvidconv)
     pipeline.add(nvosd)
@@ -382,11 +345,7 @@ def main(args):
     streammux.link(queue1)
     queue1.link(pgie)
     pgie.link(queue2)
-    # queue2.link(tracker)
-    # tracker.link(queue3)
-    queue2.link(sgie)
-    sgie.link(queue4)
-    queue4.link(tiler)
+    queue2.link(tiler)
     tiler.link(queue5)
     queue5.link(nvvidconv)
     nvvidconv.link(queue6)

@@ -1,6 +1,7 @@
 # RetinaFace with Deepstream 6.0
 This is a face detection app build on Deepstream.
 There are several repos about retinaface & deepstream. But none is compatible with the latest version of deepstream. So there it is.
+![preview](./output.gif)
 
 ## Requirements
 + Deepstream 6.0

@@ -1,232 +1,32 @@
-#!/usr/bin/env python3
+'''
+Author: zhouyuchong
+Date: 2023-07-12 09:47:15
+Description: 
+LastEditors: zhouyuchong
+LastEditTime: 2023-07-12 15:00:36
+'''
 
-################################################################################
-# SPDX-FileCopyrightText: Copyright (c) 2019-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-################################################################################
+import numpy as np
+import math
 
-import sys
-sys.path.append('../')
-import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import GObject, Gst
 from common.is_aarch_64 import is_aarch64
 from common.bus_call import bus_call
 from common.FPS import GETFPS
-import configparser
+from common.utils import cal_ratio
 
-import pyds
-import numpy as np
-import math
-import time
+from config import *
+from probe import *
+
 import ctypes
-ctypes.cdll.LoadLibrary('/opt/models/retinaface/libplugin_rface.so')
+ctypes.cdll.LoadLibrary('retinaface/libdecodeplugin.so')
 
-import scale_from_txt
-from rface_custom import *
-
-MAX_DISPLAY_LEN=64
-PGIE_CLASS_ID_VEHICLE = 0
-PGIE_CLASS_ID_BICYCLE = 1
-PGIE_CLASS_ID_PERSON = 2
-PGIE_CLASS_ID_ROADSIGN = 3
-MUXER_OUTPUT_WIDTH=1920
-MUXER_OUTPUT_HEIGHT=1080
-MUXER_BATCH_TIMEOUT_USEC=4000000
-TILED_OUTPUT_WIDTH=1920
-TILED_OUTPUT_HEIGHT=1080
-GST_CAPS_FEATURES_NVMM="memory:NVMM"
-OSD_PROCESS_MODE= 0
-OSD_DISPLAY_TEXT= 1
-
-STREAMMUX_MAX_WIDTH = 1920
-STREAMMUX_MAX_HEIGHT = 1080
-MUXER_BATCH_TIMEOUT_USEC = 4000000
-MAX_ELEMENTS_IN_DISPLAY_META = 16
-COORDINATES_SCALE_PARAM = 1
-
-
-PGIE_CLASS_ID_VEHICLE = 0
-PGIE_CLASS_ID_BICYCLE = 1
-PGIE_CLASS_ID_PERSON = 2
-PGIE_CLASS_ID_ROADSIGN = 3
-
-fps_streams={}
-is_first = True
-n_height = 0
-n_width = 0
-face_count = 0
-scale = 0
-
-def coor_scale(input_height, input_width, output_height, output_width):
-    return max(output_height/input_height, output_width/input_width)
-
-        
-def osd_sink_pad_buffer_probe(pad,info,u_data):
-    global scale
-    frame_number=0
-    gst_buffer = info.get_buffer()
-    if not gst_buffer:
-        print("Unable to get GstBuffer ")
-        return
-
-    # Retrieve batch metadata from the gst_buffer
-    # Note that pyds.gst_buffer_get_nvds_batch_meta() expects the
-    # C address of gst_buffer as input, which is obtained with hash(gst_buffer)
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))    
-    l_frame = batch_meta.frame_meta_list
-    while l_frame is not None:
-        try:
-            # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
-            # The casting is done by pyds.glist_get_nvds_frame_meta()
-            # The casting also keeps ownership of the underlying memory
-            # in the C code, so the Python garbage collector will leave
-            # it alone.
-            #frame_meta = pyds.glist_get_nvds_frame_meta(l_frame.data)
-            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-        except StopIteration:
-            break
-        
-        frame_number=frame_meta.frame_num
-        result_landmark = []
-        l_user=frame_meta.frame_user_meta_list
-        while l_user is not None:
-            try:
-                # Note that l_user.data needs a cast to pyds.NvDsUserMeta
-                # The casting is done by pyds.NvDsUserMeta.cast()
-                # The casting also keeps ownership of the underlying memory
-                # in the C code, so the Python garbage collector will leave
-                # it alone
-                user_meta=pyds.NvDsUserMeta.cast(l_user.data) 
-            except StopIteration:
-                break
-            
-            if(user_meta and user_meta.base_meta.meta_type==pyds.NvDsMetaType.NVDSINFER_TENSOR_OUTPUT_META): 
-                try:
-                    tensor_meta = pyds.NvDsInferTensorMeta.cast(user_meta.user_meta_data)
-                except StopIteration:
-                    break
-                
-                layer = pyds.get_nvds_LayerInfo(tensor_meta, 0)
-                result_landmark = parse_objects_from_tensor_meta(layer)
-                # print(result_landmark)
-                   
-            try:
-                l_user=l_user.next
-            except StopIteration:
-                break    
-          
-        num_rects = frame_meta.num_obj_meta
-        face_count = 0
-        l_obj=frame_meta.obj_meta_list
-        while l_obj is not None:
-            try:
-                # Casting l_obj.data to pyds.NvDsObjectMeta
-                obj_meta=pyds.NvDsObjectMeta.cast(l_obj.data)
-                
-            except StopIteration:
-                break
-
-            # set bbox color in rgba
-            obj_meta.rect_params.border_color.set(1.0, 1.0, 1.0, 0.0)
-            # set the border width in pixel
-            obj_meta.rect_params.border_width=5
-            obj_meta.rect_params.has_bg_color=1
-            obj_meta.rect_params.bg_color.set(0.0, 0.5, 0.3, 0.4)
-            face_count +=1
-            #print(face_count)
-            try: 
-                l_obj=l_obj.next
-
-            except StopIteration:
-                break
-
-        # Acquiring a display meta object. The memory ownership remains in
-        # the C code so downstream plugins can still access it. Otherwise
-        # the garbage collector will claim it when this probe function exits.
-
-        # draw 5 landmarks for each rect
-        # display_meta.num_circles = len(result_landmark) * 5
-        display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-        ccount = 0
-        for i in range(len(result_landmark)):
-            # scale coordinates
-            landmarks = result_landmark[i] * scale
-            # nvosd struct can only draw MAX 16 elements once 
-            # so acquire a new display meta for every face detected
-            display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)   
-            display_meta.num_circles = 5
-            ccount = 0
-            for j in range(5):
-                py_nvosd_circle_params = display_meta.circle_params[ccount]
-                py_nvosd_circle_params.circle_color.set(0.0, 0.0, 1.0, 1.0)
-                py_nvosd_circle_params.has_bg_color = 1
-                py_nvosd_circle_params.bg_color.set(0.0, 0.0, 0.0, 1.0)
-                py_nvosd_circle_params.xc = int(landmarks[j * 2]) if int(landmarks[j * 2]) > 0 else 0
-                py_nvosd_circle_params.yc = int(landmarks[j * 2 + 1]) if int(landmarks[j * 2 + 1]) > 0 else 0
-                py_nvosd_circle_params.radius=2
-                ccount = ccount + 1
-            pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-
-        display_meta=pyds.nvds_acquire_display_meta_from_pool(batch_meta)       
-        display_meta.num_labels = 1
-        py_nvosd_text_params = display_meta.text_params[0]
-        # Setting display text to be shown on screen
-        # Note that the pyds module allocates a buffer for the string, and the
-        # memory will not be claimed by the garbage collector.
-        # Reading the display_text field here will return the C address of the
-        # allocated string. Use pyds.get_string() to get the string content.
-        py_nvosd_text_params.display_text = "Frame Number={} Number of Objects={}".format(frame_number, num_rects)
-
-        # Now set the offsets where the string should appear
-        py_nvosd_text_params.x_offset = 10
-        py_nvosd_text_params.y_offset = 12
-
-        # Font , font-color and font-size
-        py_nvosd_text_params.font_params.font_name = "Serif"
-        py_nvosd_text_params.font_params.font_size = 10
-        # set(red, green, blue, alpha); set to White
-        py_nvosd_text_params.font_params.font_color.set(1.0, 1.0, 1.0, 1.0)
-
-        # Text background color
-        py_nvosd_text_params.set_bg_clr = 1
-        # set(red, green, blue, alpha); set to Black
-        py_nvosd_text_params.text_bg_clr.set(0.0, 0.0, 0.0, 1.0)
-        # Using pyds.get_string() to get display_text as string
-        # print(pyds.get_string(py_nvosd_text_params.display_text))
-        pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-        try:
-            l_frame=l_frame.next
-        except StopIteration:
-            break
-			
-    return Gst.PadProbeReturn.OK	
 
 def main(args):
-     # Check input arguments
     if len(args) < 2:
         sys.stderr.write("usage: %s <uri1> [uri2] ... [uriN]\n" % args[0])
         sys.exit(1)
 
-    for i in range(0,len(args)-1):
-        fps_streams["stream{0}".format(i)]=GETFPS(i)
     number_sources=len(args)-1
-
-    global n_height, n_width, scale
-    n_height, n_width = scale_from_txt.get_network_scale("retina_network_config.txt")
-    scale = coor_scale(n_height, n_width, TILED_OUTPUT_HEIGHT, TILED_OUTPUT_WIDTH)
 
     # Standard GStreamer initialization
     GObject.threads_init()
@@ -363,12 +163,16 @@ def main(args):
     bus = pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect ("message", bus_call, loop)
-    
-    tiler_src_pad=nvosd.get_static_pad("sink")
+
+    # ratio for draw lmks
+    scale_ratio = cal_ratio(NETWORK_HEIGHT, NETWORK_WIDTH, TILED_OUTPUT_HEIGHT, TILED_OUTPUT_WIDTH)
+    user_data = [scale_ratio, DRAW_LMKS_SIGNAL]
+
+    tiler_src_pad=queue2.get_static_pad("sink")
     if not tiler_src_pad:
         sys.stderr.write(" Unable to get src pad \n")
     else:
-        tiler_src_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, 0)
+        tiler_src_pad.add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, user_data)
 
     # List the sources
     print("Now playing...")
@@ -417,7 +221,10 @@ def decodebin_child_added(child_proxy,Object,name,user_data):
         Object.connect("child-added",decodebin_child_added,user_data)
 
     if "source" in name:
-        Object.set_property("drop-on-latency", True)
+        obj_name = str(Object)
+        if 'GstRTSPSrc' in obj_name:
+            Object.set_property("drop-on-latency", True)
+        
 
 def create_source_bin(index,uri):
     print("Creating source bin")

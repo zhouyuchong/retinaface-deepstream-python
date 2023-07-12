@@ -1,3 +1,10 @@
+'''
+Author: zhouyuchong
+Date: 2023-07-12 09:28:07
+Description: 
+LastEditors: zhouyuchong
+LastEditTime: 2023-07-12 10:35:35
+'''
 import sys
 import pyds
 import numpy as np
@@ -37,8 +44,8 @@ def parse_objects_from_tensor_meta(layer):
 
     # Do nms
     indices = torchvision.ops.nms(boxes, scores, iou_threshold=IOU_THRESHOLD).cpu()
-    result_boxes = boxes[indices, :].cpu()
-    result_scores = scores[indices].cpu()
+    # result_boxes = boxes[indices, :].cpu()
+    # result_scores = scores[indices].cpu()
     result_landmark = landmark[indices].cpu()
 
     return result_landmark

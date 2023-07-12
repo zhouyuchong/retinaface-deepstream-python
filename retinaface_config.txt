@@ -28,10 +28,3 @@ force-implicit-batch-dim=0
 # number of consecutive batches to skip for inference
 interval=0
 
-
-[class-attrs-all]
-# bbox threshold
-pre-cluster-threshold=0.6
-# nms threshold
-# post-cluster-threshold=0.4
-nms-iou-threshold=0.5

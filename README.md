@@ -1,6 +1,13 @@
+<!--
+ * @Author: zhouyuchong
+ * @Date: 2023-07-12 10:47:30
+ * @Description: 
+ * @LastEditors: zhouyuchong
+ * @LastEditTime: 2023-07-12 15:05:56
+-->
 # RetinaFace with Deepstream 6.0
-This is a face detection app build on Deepstream.
-There are several repos about retinaface & deepstream. But none is compatible with the latest version of deepstream. So there it is.
+Simple Deepstream pipeline uses Retinaface as inference. 
+Demostrate how to parse raw-output and draw landmarks on osd.
 ![preview](./output.gif)
 
 ## Requirements
